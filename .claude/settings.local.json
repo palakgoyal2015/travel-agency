@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn compile *)",
+      "Bash(mvn test *)",
+      "Bash(mvn spring-boot:run)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl *)",
+      "Bash(npm run *)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill *)",
+      "Bash(cmd *)",
+      "Bash(echo \"Backend starting \\(PID $!\\)\")",
+      "Bash(npm install *)"
+    ]
+  }
+}

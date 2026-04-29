@@ -1,0 +1,556 @@
+================================================================================
+  TRAVEL AGENCY APPLICATION — DESIGN PATTERNS & PRINCIPLES REFERENCE
+================================================================================
+  Project: Travel Agency (Sprint 1 - User Story 1: User Profile Registration)
+  Date: 2026-04-29
+================================================================================
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        PART 1: DESIGN PATTERNS                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Design patterns are reusable solutions to commonly occurring problems in software
+design. This project applies patterns from all three GoF categories (Creational,
+Structural, Behavioral) plus Architectural patterns.
+
+
+────────────────────────────────────────────────────────────────────────────────
+1. BUILDER PATTERN (Creational)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Creational
+Intent     : Construct a complex object step-by-step, separating construction
+             from its representation. Avoids telescoping constructors.
+
+Where used :
+  File     : travel-agency/src/main/java/com/epam/edp/demo/entity/User.java
+  Lines    : @Builder annotation on the User class
+
+  File     : travel-agency/src/main/java/com/epam/edp/demo/mapper/UserMapper.java
+  Lines    : User.builder().firstName(...).lastName(...).email(...).password(...).build()
+
+How applied:
+  Lombok's @Builder generates a static inner Builder class for User. Instead of
+  calling new User(id, firstName, lastName, email, password, role, createdAt),
+  the caller chain-calls only the fields it cares about:
+
+      User.builder()
+          .firstName(dto.getFirstName())
+          .lastName(dto.getLastName())
+          .email(dto.getEmail())
+          .password(encodedPassword)
+          .build();
+
+  Default values for `role` (CUSTOMER) and `createdAt` (now) are set via
+  @Builder.Default, so the builder omits them safely.
+
+Benefit    : Readable, maintainable object creation; prevents invalid objects.
+
+
+────────────────────────────────────────────────────────────────────────────────
+2. SINGLETON PATTERN (Creational)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Creational
+Intent     : Ensure a class has only one instance and provide global access.
+
+Where used :
+  All Spring-managed beans in the project are singletons by default:
+  - AuthController      (travel-agency/.../controller/AuthController.java)
+  - AuthServiceImpl     (travel-agency/.../service/impl/AuthServiceImpl.java)
+  - UserRepository      (travel-agency/.../repository/UserRepository.java)
+  - UserMapper          (travel-agency/.../mapper/UserMapper.java)
+  - GlobalExceptionHandler (travel-agency/.../exception/GlobalExceptionHandler.java)
+  - PasswordEncoderConfig  (travel-agency/.../config/PasswordEncoderConfig.java)
+
+How applied:
+  Spring's IoC container creates exactly one instance of each @Service,
+  @Repository, @RestController, @Component, and @Configuration bean per
+  application context. The @Bean-annotated passwordEncoder() method also
+  produces a singleton PasswordEncoder instance shared across the app.
+
+Benefit    : Saves resources; consistent state across all callers.
+
+
+────────────────────────────────────────────────────────────────────────────────
+3. FACTORY METHOD PATTERN (Creational)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Creational
+Intent     : Define an interface for creating an object but let subclasses (or
+             configuration) decide which class to instantiate.
+
+Where used :
+  File     : travel-agency/src/main/java/com/epam/edp/demo/config/PasswordEncoderConfig.java
+  Method   : passwordEncoder() annotated with @Bean
+
+How applied:
+  The @Bean method acts as a factory — callers depend on the PasswordEncoder
+  interface and never instantiate BCryptPasswordEncoder directly. Swapping the
+  algorithm (e.g., Argon2) requires changing only this one factory method:
+
+      @Bean
+      public PasswordEncoder passwordEncoder() {
+          return new BCryptPasswordEncoder();   // factory decision here
+      }
+
+  AuthServiceImpl and UserMapper receive a PasswordEncoder via constructor
+  injection — they never reference the concrete BCrypt class.
+
+Benefit    : Decouples algorithm selection from usage; easy to swap.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4. STRATEGY PATTERN (Behavioral)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Behavioral
+Intent     : Define a family of algorithms, encapsulate each, and make them
+             interchangeable. The strategy lets the algorithm vary independently
+             from the clients that use it.
+
+Where used :
+  Interface : org.springframework.security.crypto.password.PasswordEncoder
+  Strategy  : BCryptPasswordEncoder (selected in PasswordEncoderConfig.java)
+  Context   : AuthServiceImpl.java, UserMapper.java (use PasswordEncoder)
+
+How applied:
+  PasswordEncoder is the Strategy interface with the encode()/matches() contract.
+  BCryptPasswordEncoder is the concrete strategy. The context classes
+  (AuthServiceImpl and UserMapper) hold a reference to the interface and call
+  encode() without knowing the hashing algorithm:
+
+      // Strategy interface used — algorithm is irrelevant to the caller
+      String hashedPw = passwordEncoder.encode(dto.getPassword());
+
+Benefit    : New encoding algorithms can be plugged in without touching
+             service or mapper code.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5. REPOSITORY PATTERN (Architectural / Structural)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Architectural
+Intent     : Abstract the data persistence layer behind a collection-like
+             interface, decoupling business logic from the database.
+
+Where used :
+  File     : travel-agency/src/main/java/com/epam/edp/demo/repository/UserRepository.java
+
+How applied:
+  UserRepository extends JpaRepository<User, UUID>. The service layer calls
+  userRepository.save(), userRepository.existsByEmail(), etc. without knowing
+  whether the store is H2, PostgreSQL, or anything else. JPA, SQL, and
+  connection management are fully hidden.
+
+Benefit    : Database can be swapped (H2 → PostgreSQL) by changing only the
+             datasource config — zero service-layer changes needed.
+
+
+────────────────────────────────────────────────────────────────────────────────
+6. DATA TRANSFER OBJECT (DTO) PATTERN (Architectural / Structural)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Architectural
+Intent     : Carry data between processes (or layers) using plain objects that
+             contain no business logic, separating the API contract from the
+             domain model.
+
+Where used :
+  File     : travel-agency/.../dto/request/SignUpRequestDTO.java
+  File     : travel-agency/.../dto/response/SignUpResponseDTO.java
+
+How applied:
+  The API contract (field names, validation annotations, response shape) is
+  defined on the DTOs. The User entity is never exposed directly through the
+  API. This means:
+  - Sensitive fields (e.g., hashed password) cannot accidentally leak.
+  - The entity can be refactored freely without breaking the API contract.
+  - Bean Validation (@Email, @NotBlank, @Pattern) belongs on the DTO, not
+    the entity.
+
+Benefit    : Separation of concerns; prevents over-posting and data leakage.
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. MAPPER / ADAPTER PATTERN (Structural)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Structural
+Intent     : Convert the interface of one class into another that clients
+             expect. Mapper is a specialisation that converts between
+             representation layers (DTO ↔ Entity).
+
+Where used :
+  File     : travel-agency/src/main/java/com/epam/edp/demo/mapper/UserMapper.java
+
+How applied:
+  UserMapper.toEntity(SignUpRequestDTO dto, PasswordEncoder encoder) translates
+  the incoming API DTO into a User JPA entity, encoding the password in the
+  process. AuthServiceImpl delegates all mapping responsibility to UserMapper,
+  keeping the service thin:
+
+      User user = userMapper.toEntity(request, passwordEncoder);
+      userRepository.save(user);
+
+Benefit    : Mapping logic is centralised and independently testable. Adding
+             new fields requires only updating the mapper.
+
+
+────────────────────────────────────────────────────────────────────────────────
+8. FACADE PATTERN (Structural)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Structural
+Intent     : Provide a simplified interface to a complex subsystem.
+
+Where used :
+  File     : travel-agency/src/main/java/com/epam/edp/demo/controller/AuthController.java
+
+How applied:
+  AuthController presents a single, clean HTTP facade over the auth subsystem
+  (validation, email uniqueness check, password encoding, user persistence,
+  response mapping). The caller (frontend) just sends a POST /auth/sign-up and
+  gets a 201 or an error — all complexity is hidden behind the controller.
+
+Benefit    : Simplifies integration; decouples frontend from internal subsystem.
+
+
+────────────────────────────────────────────────────────────────────────────────
+9. CHAIN OF RESPONSIBILITY PATTERN (Behavioral)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Behavioral
+Intent     : Pass a request along a chain of handlers; each handler decides to
+             process or pass it further.
+
+Where used :
+  File     : travel-agency/.../exception/GlobalExceptionHandler.java
+
+How applied:
+  Spring's @RestControllerAdvice implements a chain: when an exception is
+  thrown, Spring tries each @ExceptionHandler in order (most-specific first):
+
+      handleEmailAlreadyExists  → catches EmailAlreadyExistsException → 409
+      handleValidationErrors    → catches MethodArgumentNotValidException → 400
+      handleGenericException    → catches all remaining Exceptions → 500
+
+  Each handler either processes the exception or lets Spring fall through to
+  the next.
+
+Benefit    : Exception routing is centralised, extensible, and open for
+             new exception types without modifying existing handlers.
+
+
+────────────────────────────────────────────────────────────────────────────────
+10. TEMPLATE METHOD PATTERN (Behavioral)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Behavioral
+Intent     : Define the skeleton of an algorithm in a base class, deferring
+             specific steps to subclasses.
+
+Where used :
+  Spring Data JPA's SimpleJpaRepository, extended by UserRepository.
+
+How applied:
+  JpaRepository.save(entity) follows a fixed template:
+    1. Begin transaction
+    2. Merge or persist the entity (step implemented by the framework)
+    3. Flush the persistence context
+    4. Commit transaction
+  UserRepository inherits this template and only overrides the query
+  methods (existsByEmail, findByEmail) via Spring Data's derived queries.
+
+Benefit    : CRUD boilerplate is eliminated; custom queries follow the same
+             lifecycle template automatically.
+
+
+────────────────────────────────────────────────────────────────────────────────
+11. CUSTOM HOOK PATTERN — Frontend (Behavioral / React)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Behavioral (React-specific pattern)
+Intent     : Extract stateful logic from a component into a reusable function,
+             separating concern of state management from rendering.
+
+Where used :
+  File     : frontend-app/src/hooks/useRegistration.js
+
+How applied:
+  useRegistration() encapsulates:
+  - Form field state (useState)
+  - Client-side validation logic
+  - API call (authApi.signUp)
+  - Loading and success/error states
+  - Field-level error mapping from server responses (409 → email field error)
+
+  RegistrationForm renders purely based on the values returned by the hook.
+  It holds no logic itself.
+
+Benefit    : Logic is independently testable; RegistrationForm is a pure
+             presentational component.
+
+
+────────────────────────────────────────────────────────────────────────────────
+12. CONTROLLED COMPONENT PATTERN — Frontend (Structural / React)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Structural (React-specific)
+Intent     : Make React state the single source of truth for form input values,
+             enabling predictable, testable forms.
+
+Where used :
+  File     : frontend-app/src/components/common/FormInput.jsx
+  File     : frontend-app/src/components/registration/RegistrationForm.jsx
+
+How applied:
+  Every <input> receives value={fields.name} and onChange={handleChange}.
+  No uncontrolled refs or DOM reads are used. The hook owns all state; the
+  components are driven entirely by props.
+
+Benefit    : Instant validation feedback; form state is always observable.
+
+
+────────────────────────────────────────────────────────────────────────────────
+13. SERVICE LAYER PATTERN (Architectural)
+────────────────────────────────────────────────────────────────────────────────
+Category   : Architectural
+Intent     : Place all business logic in a dedicated service layer, keeping
+             controllers and repositories focused on their own concerns.
+
+Where used :
+  Interface : travel-agency/.../service/AuthService.java
+  Impl      : travel-agency/.../service/impl/AuthServiceImpl.java
+
+How applied:
+  AuthController calls authService.signUp(request) — the controller has zero
+  business logic. All rules (email uniqueness, password encoding, user
+  creation) live exclusively in AuthServiceImpl.
+
+Benefit    : Business logic is reusable, independently testable, and not
+             tied to HTTP or database details.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                  PART 2: DESIGN PRINCIPLES (SOLID + Others)                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+────────────────────────────────────────────────────────────────────────────────
+S — SINGLE RESPONSIBILITY PRINCIPLE (SRP)
+────────────────────────────────────────────────────────────────────────────────
+Definition : A class should have only one reason to change.
+
+Applied in :
+  AuthController.java
+    → Only responsibility: handle HTTP request/response for auth endpoints.
+      No business logic, no mapping, no validation logic.
+
+  AuthServiceImpl.java
+    → Only responsibility: execute registration business logic (uniqueness
+      check, delegate mapping, persist).
+
+  UserMapper.java
+    → Only responsibility: convert between DTOs and User entity.
+
+  GlobalExceptionHandler.java
+    → Only responsibility: translate exceptions into HTTP error responses.
+
+  UserRepository.java
+    → Only responsibility: data access for User entities.
+
+  useRegistration.js (frontend)
+    → Only responsibility: manage registration form state and submission.
+
+  FormInput.jsx (frontend)
+    → Only responsibility: render a single labelled input with error display.
+
+
+────────────────────────────────────────────────────────────────────────────────
+O — OPEN/CLOSED PRINCIPLE (OCP)
+────────────────────────────────────────────────────────────────────────────────
+Definition : Software entities should be open for extension but closed for
+             modification.
+
+Applied in :
+  GlobalExceptionHandler.java
+    → New exception types are handled by adding new @ExceptionHandler methods.
+      Existing handlers are never modified.
+
+  PasswordEncoderConfig.java + PasswordEncoder interface
+    → A new hashing strategy (Argon2, PBKDF2) requires only a new @Bean
+      factory method — existing code is unchanged.
+
+  UserRepository.java
+    → New query methods (e.g., findByRole) are added as new method
+      declarations — existing methods and the base class are unmodified.
+
+
+────────────────────────────────────────────────────────────────────────────────
+L — LISKOV SUBSTITUTION PRINCIPLE (LSP)
+────────────────────────────────────────────────────────────────────────────────
+Definition : Subtypes must be substitutable for their base types without
+             altering the correctness of the program.
+
+Applied in :
+  PasswordEncoder (interface) ↔ BCryptPasswordEncoder (concrete)
+    → Any class implementing PasswordEncoder can substitute BCrypt without
+      breaking AuthServiceImpl or UserMapper. Both honour the encode/matches
+      contract.
+
+  AuthService (interface) ↔ AuthServiceImpl (concrete)
+    → AuthController depends on AuthService. Any correct implementation of
+      AuthService can be substituted — the controller behaviour is unchanged.
+
+  JpaRepository ↔ UserRepository
+    → UserRepository substitutes JpaRepository everywhere Spring injects it,
+      preserving all CRUD contracts.
+
+
+────────────────────────────────────────────────────────────────────────────────
+I — INTERFACE SEGREGATION PRINCIPLE (ISP)
+────────────────────────────────────────────────────────────────────────────────
+Definition : Clients should not be forced to depend on interfaces they do not use.
+
+Applied in :
+  AuthService.java
+    → Exposes only signUp() to its sole client (AuthController). Future
+      operations (signIn, resetPassword) will be separate methods added only
+      when a client needs them. The interface stays minimal.
+
+  UserRepository.java
+    → Extends JpaRepository but only the methods actually called (save,
+      existsByEmail, findByEmail) are used. Spring Data generates only the
+      implementations actually declared.
+
+  SignUpRequestDTO / SignUpResponseDTO
+    → Separate DTOs per operation. The sign-up response doesn't expose
+      JWT fields (defined in SignInResponseDTO), and the sign-up request
+      doesn't carry auth token fields. Each DTO is minimal for its purpose.
+
+
+────────────────────────────────────────────────────────────────────────────────
+D — DEPENDENCY INVERSION PRINCIPLE (DIP)
+────────────────────────────────────────────────────────────────────────────────
+Definition : High-level modules should not depend on low-level modules; both
+             should depend on abstractions.
+
+Applied in :
+  AuthController depends on AuthService (interface), not AuthServiceImpl.
+  AuthServiceImpl depends on PasswordEncoder (interface), not BCryptPasswordEncoder.
+  AuthServiceImpl depends on UserRepository (interface), not SimpleJpaRepository.
+  AuthServiceImpl depends on UserMapper (@Component abstraction via Spring).
+
+  All dependencies are injected via constructor injection (@RequiredArgsConstructor),
+  which makes dependencies explicit and enables easy testing with mocks.
+
+  Frontend equivalent:
+    RegistrationForm depends on useRegistration hook (abstraction).
+    useRegistration depends on authApi module (abstraction).
+    authApi uses fetch — the transport detail is isolated in one file.
+
+
+────────────────────────────────────────────────────────────────────────────────
+DRY — DON'T REPEAT YOURSELF
+────────────────────────────────────────────────────────────────────────────────
+Definition : Every piece of knowledge must have a single, unambiguous,
+             authoritative representation in a system.
+
+Applied in :
+  UserMapper.java
+    → DTO-to-entity conversion logic is in one place. If a field is added to
+      User, only the mapper changes.
+
+  validate() in useRegistration.js (frontend)
+    → All client-side validation rules are in one function. Field rules are
+      not duplicated across onChange and onSubmit.
+
+  FormInput.jsx (frontend)
+    → The label + input + error pattern is implemented once and reused for
+      all five form fields.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SEPARATION OF CONCERNS (SoC)
+────────────────────────────────────────────────────────────────────────────────
+Definition : Different concerns of an application should be separated into
+             distinct sections or layers.
+
+Backend layers:
+  Presentation Layer  → AuthController (HTTP protocol concern)
+  Business Layer      → AuthServiceImpl (business rules concern)
+  Mapping Layer       → UserMapper (data translation concern)
+  Data Layer          → UserRepository (persistence concern)
+  Cross-cutting       → GlobalExceptionHandler, CorsConfig, PasswordEncoderConfig
+
+Frontend layers:
+  API Layer           → src/api/authApi.js (HTTP concern)
+  State/Logic Layer   → src/hooks/useRegistration.js (form logic concern)
+  Component Layer     → src/components/ (rendering concern)
+  Page Layer          → src/pages/ (layout and composition concern)
+
+
+────────────────────────────────────────────────────────────────────────────────
+FAIL FAST PRINCIPLE
+────────────────────────────────────────────────────────────────────────────────
+Definition : Detect and report errors as early as possible.
+
+Applied in :
+  SignUpRequestDTO.java
+    → Bean Validation annotations (@NotBlank, @Email, @Size, @Pattern)
+      reject invalid input at the HTTP boundary — before any service code runs.
+      Errors surface in milliseconds rather than after a database round-trip.
+
+  useRegistration.js (frontend)
+    → Client-side validate() runs before the API call. Invalid forms never
+      hit the network.
+
+
+────────────────────────────────────────────────────────────────────────────────
+LAYERED ARCHITECTURE PATTERN
+────────────────────────────────────────────────────────────────────────────────
+Definition : Organise the application into horizontal layers, each with a
+             specific role, where each layer only communicates with the
+             layer directly below it.
+
+Applied in :
+  Controller → Service → Mapper + Repository → Database
+
+  HTTP Request
+      │
+      ▼
+  AuthController          (Presentation Layer)
+      │
+      ▼
+  AuthService/Impl        (Business Logic Layer)
+      │           │
+      ▼           ▼
+  UserMapper   UserRepository  (Mapping + Data Access Layer)
+                    │
+                    ▼
+               H2 Database     (Data Layer)
+
+Benefit    : Changes in one layer don't cascade through the whole application.
+
+
+================================================================================
+  SUMMARY TABLE
+================================================================================
+
+ #   Pattern / Principle         Category        Primary File(s)
+────────────────────────────────────────────────────────────────────────────────
+ 1   Builder                     Creational      User.java, UserMapper.java
+ 2   Singleton                   Creational      All Spring @Bean / @Component
+ 3   Factory Method              Creational      PasswordEncoderConfig.java
+ 4   Strategy                    Behavioral      PasswordEncoder + BCrypt
+ 5   Repository                  Architectural   UserRepository.java
+ 6   DTO                         Architectural   SignUpRequestDTO/ResponseDTO
+ 7   Mapper / Adapter            Structural      UserMapper.java
+ 8   Facade                      Structural      AuthController.java
+ 9   Chain of Responsibility     Behavioral      GlobalExceptionHandler.java
+10   Template Method             Behavioral      JpaRepository (Spring Data)
+11   Custom Hook                 Behavioral      useRegistration.js
+12   Controlled Component        Structural      FormInput.jsx
+13   Service Layer               Architectural   AuthService + AuthServiceImpl
+──   Single Responsibility       SOLID-S         All layer classes
+──   Open/Closed                 SOLID-O         ExceptionHandler, Encoder cfg
+──   Liskov Substitution         SOLID-L         PasswordEncoder, AuthService
+──   Interface Segregation       SOLID-I         AuthService, UserRepository
+──   Dependency Inversion        SOLID-D         Constructor injection throughout
+──   DRY                         Principle       UserMapper, FormInput, validate()
+──   Separation of Concerns      Principle       Backend + Frontend layers
+──   Fail Fast                   Principle       Bean Validation, client validate
+──   Layered Architecture        Architectural   Full stack structure
+
+================================================================================
